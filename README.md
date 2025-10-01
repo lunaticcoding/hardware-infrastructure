@@ -149,7 +149,7 @@ module "talos" {
   # https://registry.terraform.io/modules/hcloud-talos/talos/hcloud
   version = "<latest-version>" # Replace with the latest version number
 
-  talos_version = "v1.10.3" # The version of talos features to use in generated machine configurations
+  talos_version = "v1.11.0" # The version of talos features to use in generated machine configurations
 
   hcloud_token            = "your-hcloud-token"
   # If true, the current IP address will be used as the source for the firewall rules.
@@ -175,9 +175,9 @@ module "talos" {
   version = "<latest-version>" # Replace with the latest version number
 
   # Use versions compatible with each other and supported by the module/Talos
-  talos_version      = "v1.10.3"
+  talos_version      = "v1.11.0"
   kubernetes_version = "1.30.3"
-  cilium_version     = "1.16.2"
+  cilium_version     = "1.18.0"
 
   hcloud_token = "your-hcloud-token"
 
@@ -203,6 +203,64 @@ module "talos" {
   service_ipv4_cidr = "10.0.8.0/21"
 }
 ```
+
+### Mixed Worker Node Types
+
+For more advanced use cases, you can define different types of worker nodes with individual configurations using the `worker_nodes` variable:
+
+```hcl
+module "talos" {
+  source  = "hcloud-talos/talos/hcloud"
+  version = "<latest-version>"
+
+  talos_version      = "v1.10.3"
+  kubernetes_version = "1.30.3"
+
+  hcloud_token            = "your-hcloud-token"
+  firewall_use_current_ip = true
+
+  cluster_name    = "mixed-cluster"
+  datacenter_name = "fsn1-dc14"
+
+  control_plane_count       = 1
+  control_plane_server_type = "cx22"
+
+  # Define different worker node types
+  worker_nodes = [
+    # Standard x86 workers
+    {
+      type  = "cx22"
+      labels = {
+        "node.kubernetes.io/instance-type" = "cx22"
+      }
+    },
+    # ARM workers for specific workloads with taints
+    {
+      type   = "cax22"
+      labels = {
+        "node.kubernetes.io/arch"          = "arm64"
+        "affinity.example.com" = "example"
+      }
+      taints = [
+        {
+          key    = "arm64-only"
+          value  = "true"
+          effect = "NoSchedule"
+        }
+      ]
+    }
+  ]
+}
+```
+
+> [!NOTE]
+> The `worker_nodes` variable allows you to:
+> - Mix different server types (x86 and ARM)
+> - Add custom labels to nodes
+> - Apply taints for workload isolation
+> - Control the count of each node type independently
+> 
+> The legacy `worker_count` and `worker_server_type` variables are still supported for backward compatibility but are deprecated in favor of `worker_nodes`.
 
 You need to pipe the outputs of the module:
 
@@ -311,3 +369,61 @@ Refer to the [official Talos documentation on upgrading Kubernetes](https://www.
   terraform module. This module is based on many ideas and code snippets from kube-hetzner.
 - [Talos](https://www.talos.dev/) For the incredible OS.
 - [Hetzner Cloud](https://www.hetzner.com/cloud) For the great cloud hosting.
+
+# Complete setup from scratch
+```bash
+brew install kubeseal
+
+# Ensure that there is a valid HCLOUD_TOKEN in the environment for your project and set it in .tfvars and .env also set it for your shell
+export HCLOUD="MY_HCLOUD_API_TOKEN"
+
+# Create images
+./_packer/create.sh
+
+# Set your current public IP address in .tfvars
+curl ifconfig.me
+# For example 82.135.80.251
+firewall_kube_api_source  = ["82.135.80.251/32"]
+firewall_talos_api_source = ["82.135.80.251/32"]
+
+# Run this to create the cluster
+terraform apply -var-file=.tfvars
+
+# Set the A record for kube.newbo.app in the DNS entries to the first entry in public_ipv4_list
+
+# Unset KUBECONFIG if set
+unset KUBECONFIG
+
+terraform output --raw kubeconfig > ./kubeconfig
+terraform output --raw talosconfig > ./talosconfig
+
+chmod 600 ./kubeconfig ./talosconfig
+
+mkdir -p ~/.kube
+cp ./kubeconfig ~/.kube/config
+chmod 600 ~/.kube/config
+
+mkdir -p ~/.talos
+cp ./talosconfig ~/.talos/config
+chmod 600 ~/.talos/config
+
+# Setup Argocd
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Port forward to access argocd
+kubectl -n argocd port-forward svc/argocd-server 8443:443
+# Retrieve password:
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+# Login to argocd cmd tool
+argocd login argocd.newbo.app --grpc-web --username admin --password '<the-password>'
+
+# Then open https://localhost:8443  
+# In Argo CD UI → Settings → Repositories → connect my software-infrastructure and newbo-server repo.
+
+# Connect Hetzner Cloud to the cluster (might already exist)
+kubectl -n kube-system create secret generic hcloud --from-literal=token="MY_HCLOUD_API_TOKEN"
+
+# Wait until sync of app of apps fails and run the following in the software-infrastructure repo (or manually sync in GUI):
+argocd app sync sealed-secrets
+```
