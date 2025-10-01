@@ -253,3 +253,6 @@ debug.tf
 
 .aider*
 .env
+
+terraform.tfstate
+terraform.tfstate.backup
