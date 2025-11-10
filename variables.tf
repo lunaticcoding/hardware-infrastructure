@@ -201,19 +201,32 @@ variable "control_plane_server_type" {
   type        = string
   description = <<EOF
     The server type to use for the control plane nodes.
-    Possible values: cx11, cx21, cx22, cx31, cx32, cx41, cx42, cx51, cx52, cpx11, cpx21, cpx31,
-    cpx41, cpx51, cax11, cax21, cax31, cax41, ccx13, ccx23, ccx33, ccx43, ccx53, ccx63
+    Possible values: cpx11, cpx12, cpx21, cpx22, cpx31, cpx32, cpx41, cpx42, cpx51, cpx52, cpx62,
+    cax11, cax21, cax31, cax41, ccx13, ccx23, ccx33, ccx43, ccx53, ccx63,
+    cx22, cx23, cx32, cx33, cx42, cx43, cx52, cx53
   EOF
   validation {
     condition = contains([
-      "cx11", "cx21", "cx22", "cx31", "cx32", "cx41", "cx42", "cx51", "cx52",
-      "cpx11", "cpx21", "cpx31", "cpx41", "cpx51",
+      "cpx11", "cpx12", "cpx21", "cpx22", "cpx31", "cpx32", "cpx41", "cpx42", "cpx51", "cpx52", "cpx62",
       "cax11", "cax21", "cax31", "cax41",
-      "ccx13", "ccx23", "ccx33", "ccx43", "ccx53", "ccx63"
+      "ccx13", "ccx23", "ccx33", "ccx43", "ccx53", "ccx63",
+      "cx22", "cx23", "cx32", "cx33", "cx42", "cx43", "cx52", "cx53"
     ], var.control_plane_server_type)
     error_message = "Invalid control plane server type."
   }
 }
+
+
+variable "control_plane_allow_schedule" {
+  type        = bool
+  default     = false
+  description = <<EOF
+    If true, control plane nodes will be schedulable (i.e., can run workloads).
+    If false (default), control plane nodes will be tainted to prevent scheduling of regular workloads.
+    Note: If you set worker_count to 0, control plane nodes will automatically be schedulable regardless of this setting.
+  EOF
+}
+
 
 variable "worker_count" {
   type        = number
@@ -227,18 +240,19 @@ variable "worker_count" {
 
 variable "worker_server_type" {
   type        = string
-  default     = "cx11"
+  default     = "cpx11"
   description = <<EOF
     DEPRECATED: Use worker_nodes instead. The server type to use for the worker nodes.
-    Possible values: cx11, cx21, cx22, cx31, cx32, cx41, cx42, cx51, cx52, cpx11, cpx21, cpx31,
-    cpx41, cpx51, cax11, cax21, cax31, cax41, ccx13, ccx23, ccx33, ccx43, ccx53, ccx63
+    Possible values: cpx11, cpx12, cpx21, cpx22, cpx31, cpx32, cpx41, cpx42, cpx51, cpx52, cpx62,
+    cax11, cax21, cax31, cax41, ccx13, ccx23, ccx33, ccx43, ccx53, ccx63,
+    cx22, cx23, cx32, cx33, cx42, cx43, cx52, cx53
   EOF
   validation {
     condition = contains([
-      "cx11", "cx21", "cx22", "cx31", "cx32", "cx41", "cx42", "cx51", "cx52",
-      "cpx11", "cpx21", "cpx31", "cpx41", "cpx51",
+      "cpx11", "cpx12", "cpx21", "cpx22", "cpx31", "cpx32", "cpx41", "cpx42", "cpx51", "cpx52", "cpx62",
       "cax11", "cax21", "cax31", "cax41",
-      "ccx13", "ccx23", "ccx33", "ccx43", "ccx53", "ccx63"
+      "ccx13", "ccx23", "ccx33", "ccx43", "ccx53", "ccx63",
+      "cx22", "cx23", "cx32", "cx33", "cx42", "cx43", "cx52", "cx53"
     ], var.worker_server_type)
     error_message = "Invalid worker server type."
   }
@@ -257,7 +271,7 @@ variable "worker_nodes" {
   default     = []
   description = <<EOF
     List of worker node configurations. Each object defines a group of worker nodes with the same configuration.
-    - type: Server type (cx11, cx21, cx22, cx31, cx32, cx41, cx42, cx51, cx52, cpx11, cpx21, cpx31, cpx41, cpx51, cax11, cax21, cax31, cax41, ccx13, ccx23, ccx33, ccx43, ccx53, ccx63)
+    - type: Server type (cpx11, cpx12, cpx21, cpx22, cpx31, cpx32, cpx41, cpx42, cpx51, cpx52, cpx62, cax11, cax21, cax31, cax41, ccx13, ccx23, ccx33, ccx43, ccx53, ccx63, cx22, cx23, cx32, cx33, cx42, cx43, cx52, cx53)
     - count: Number of nodes of this type
     - labels: Map of Kubernetes labels to apply to these nodes (default: {})
     - taints: List of Kubernetes taints to apply to these nodes (default: [])
@@ -285,10 +299,10 @@ variable "worker_nodes" {
   validation {
     condition = alltrue([
       for node in var.worker_nodes : contains([
-        "cx11", "cx21", "cx22", "cx31", "cx32", "cx41", "cx42", "cx51", "cx52",
-        "cpx11", "cpx21", "cpx31", "cpx41", "cpx51",
+        "cpx11", "cpx12", "cpx21", "cpx22", "cpx31", "cpx32", "cpx41", "cpx42", "cpx51", "cpx52", "cpx62",
         "cax11", "cax21", "cax31", "cax41",
-        "ccx13", "ccx23", "ccx33", "ccx43", "ccx53", "ccx63"
+        "ccx13", "ccx23", "ccx33", "ccx43", "ccx53", "ccx63",
+        "cx22", "cx23", "cx32", "cx33", "cx42", "cx43", "cx52", "cx53"
       ], node.type)
     ])
     error_message = "Invalid worker server type in worker_nodes."
@@ -360,6 +374,23 @@ variable "talos_worker_extra_config_patches" {
   description = "List of additional YAML configuration patches to apply to the Talos machine configuration for worker nodes."
 }
 
+
+variable "tailscale" {
+  type = object({
+    enabled  = optional(bool)
+    auth_key = optional(string)
+  })
+  default = {
+    enabled  = false
+    auth_key = ""
+  }
+  description = "The auth key to use for Tailscale."
+  validation {
+    condition     = var.tailscale.enabled == false || (var.tailscale.enabled == true && var.tailscale.auth_key != "")
+    error_message = "If tailscale is enabled, an auth_key must be provided."
+  }
+}
+
 variable "registries" {
   type = object({
     mirrors = optional(map(object({
@@ -398,7 +429,7 @@ variable "registries" {
 # Deployments
 variable "cilium_version" {
   type        = string
-  default     = "1.18.0"
+  default     = "1.16.2"
   description = <<EOF
     The version of Cilium to deploy. If not set, the `1.16.0` version will be used.
     Needs to be compatible with the `kubernetes_version`: https://docs.cilium.io/en/stable/network/kubernetes/compatibility/
