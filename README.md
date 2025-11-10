@@ -409,7 +409,9 @@ chmod 600 ~/.talos/config
 
 # Setup Argocd
 kubectl create namespace argocd
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Quick demo
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/ha/install.yaml
 
 # Port forward to access argocd
 kubectl -n argocd port-forward svc/argocd-server 8443:443
