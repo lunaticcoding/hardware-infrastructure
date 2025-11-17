@@ -450,18 +450,138 @@ kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/ha/install.yaml
 
 # Port forward to access argocd
-kubectl -n argocd port-forward svc/argocd-server 8443:443
+kubectl -n argocd port-forward svc/argocd-server.yaml 8443:443
 # Retrieve password:
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
 # Login to argocd cmd tool
-argocd login argocd.newbo.app --grpc-web --username admin --password '<the-password>'
+argocd login localhost:8443 --grpc-web --username admin --password '<the-password>'
 
 # Then open https://localhost:8443  
 # In Argo CD UI → Settings → Repositories → connect my software-infrastructure and newbo-server repo.
+# Use `ssh-keygen -lf <private-key-file>` to check the hash
 
 # Connect Hetzner Cloud to the cluster (might already exist)
 kubectl -n kube-system create secret generic hcloud --from-literal=token="MY_HCLOUD_API_TOKEN"
 
+
 # Wait until sync of app of apps fails and run the following in the software-infrastructure repo (or manually sync in GUI):
+# Falls hier die permissions fehlen, kann die app auch über die GUI synchronisiert werden.
 argocd app sync sealed-secrets
+```
+
+# Add Hetzner GPU Server
+
+Ssh into the machine using:
+```bash
+ssh -i ~/.ssh/hetzner_gpu_server root@46.4.103.23
+```
+
+Add the new dedicated server to the load balancer in the Hetzner Cloud Console.
+
+Run the following commands. 
+First install containerd runtime:
+```bash
+sudo apt-get update
+apt-get install -y containerd
+
+# Create default config
+mkdir -p /etc/containerd
+containerd config default > /etc/containerd/config.toml
+
+# Enable systemd cgroup driver (required for Kubernetes)
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+# Restart containerd
+systemctl restart containerd
+systemctl enable containerd
+```
+
+Configure kernel parameters:
+```bash
+# Load required modules
+cat <<EOF | tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+modprobe overlay
+modprobe br_netfilter
+
+# Set up required sysctl params
+cat <<EOF | tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+# Apply sysctl params without reboot
+sysctl --system
+```
+
+Then turn of swap
+```bash
+# Disable swap permanently
+swapoff -a
+sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+```
+
+Finally install kubeadm, kubelet and kubectl:
+```bash
+sudo apt-get install -y apt-transport-https ca-certificates curl
+
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt-get update
+apt-get install -y kubeadm=1.33.3-1.1 kubelet=1.33.3-1.1 kubectl=1.33.3-1.1
+sudo apt-mark hold kubelet kubeadm kubectl
+```
+Create cluster-info config.map: 
+```bash 
+# First, get your current kubeconfig server
+kubectl config view --raw -o jsonpath='{.clusters[0].cluster.server}'
+
+# Create the cluster-info configmap manually
+# 1. The cluster-info ConfigMap itself (controller doesn't create it, only signs it)
+kubectl create configmap cluster-info \
+  --from-literal=kubeconfig="apiVersion: v1
+clusters:
+- cluster:
+    server: https://116.202.22.162:6443
+    insecure-skip-tls-verify: true
+  name: \"\"
+contexts: []
+current-context: \"\"
+kind: Config
+preferences: {}
+users: []" \
+  -n kube-public
+
+# 2. RBAC for bootstrap tokens to join
+kubectl create clusterrolebinding kubeadm:kubelet-bootstrap \
+  --clusterrole=system:node-bootstrapper \
+  --group=system:bootstrappers:kubeadm:default-node-token
+
+# 3. Permission to read cluster-info
+kubectl create rolebinding kubeadm:bootstrap-signer-clusterinfo \
+  --role=system:bootstrap-signer-clusterinfo \
+  --group=system:bootstrappers:kubeadm:default-node-token \
+  -n kube-public
+```
+
+Add the node to the cluster by running:
+```bash
+#Run this command on the GPU server to join the cluster.
+./scripts/generate-join-command.sh
+
+# View all bootstrap tokens
+kubectl get secrets -n kube-system -o name | grep bootstrap-token
+
+# Delete token after use
+kubectl delete secret bootstrap-token-<token-id> -n kube-system
+
+# Add labels to node
+kubectl label nodes <node-name> environment=production workload-type=compute
 ```
